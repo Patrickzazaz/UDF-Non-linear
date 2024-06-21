@@ -1,0 +1,88 @@
+#include "udf.h"
+#include <stdio.h>
+
+// Static variables to hold previous and current velocities, positions, and accelerations
+static real v_old = 0.0;
+static real oma_old = 0.0;
+static real the_old = 0.0;
+
+// File pointer for writing data
+static FILE *fp = NULL;
+
+// Function to define the center of gravity motion and calculate new parameters
+DEFINE_CG_MOTION(flut, dt, vel, omega, time, dtime)
+{
+    // Variable declarations
+    Thread *t;
+    Domain *d = Get_Domain(1);
+    real x_cg[3], force[3], moment[3];
+    real m = 51.5;
+    real s = 2.20935;
+    real I = 2.275;
+    real kh = 50828.463;
+    real ka = 35923.241;
+    real det;
+    det = (m * I) - (s * s);
+
+    // Initialize velocity and angular velocity arrays to zero
+    NV_S(vel, =, 0.0);
+    NV_S(omega, =, 0.0);
+
+    // Get the thread associated with the dynamic mesh zone
+    t = DT_THREAD(dt);
+
+    // Get the center of gravity coordinates
+    for (int i = 0; i < 3; i++) {
+        x_cg[i] = DT_CG(dt)[i];
+    }
+
+    // Compute force and moment on the structure
+    Compute_Force_And_Moment(d, t, x_cg, force, moment, TRUE);
+
+    // Calculate the acceleration based on the y-direction force
+    real f, M, co, yo1, yo2;
+    f = force[1];
+    M = moment[2];
+    co = dtime / det;
+    yo1 = f - (kh * x_cg[1]);
+    yo2 = M - (ka * the_old);
+
+    // Use central difference method to update acceleration
+    v_old += co * ((yo1 * I) - (yo2 * s));
+    oma_old += co * (-(yo1 * s) + (yo2 * m));
+
+    // Use central difference method to update velocity and position
+    the_old += (oma_old* dtime);
+
+    // Assign the updated velocity and angular velocity
+    vel[1] = v_old;
+    omega[2] = oma_old; // Use omega[2] for angular velocity around z-axis
+
+
+    // Open file for writing if not already opened
+    if (fp == NULL) {
+        // Specify the exact path for the output_data.txt file
+        fp = fopen("output_2v195.txt", "w");
+        if (fp == NULL) {
+            Message("Error opening file for writing\n");
+            return;
+        }
+        // Write the header for the data
+        fprintf(fp, "Time\ty-position\tVelocity\tAngular Velocity\n");
+    }
+
+    // Write the computed data to the file
+    fprintf(fp, "%g\t%g\t%g\t%g\n", time, x_cg[1], v_old, omega[2]);
+
+    // Flush the file buffer to ensure data is written
+    fflush(fp);
+}
+
+// Function to close the file when simulation is done
+DEFINE_EXECUTE_AT_END(close_file)
+{
+    if (fp != NULL) {
+        fclose(fp);
+        fp = NULL;
+    }
+}
